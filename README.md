@@ -177,6 +177,9 @@ Our method achieves state-of-the-art (SOTA) results on the ONCE dataset, outperf
         <td><b>82.39</b></td>
         <td>85.09</td>
         <td><b>79.85</b></td>
+        <td>0.055</td>
+    </tr>
+</table>
 
 ## Inference Speed and FLOPs
 
