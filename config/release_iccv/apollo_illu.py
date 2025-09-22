@@ -1,0 +1,165 @@
+from mmengine.config import read_base
+from mmengine.config import Config
+import os.path as osp
+
+_base_ = [
+    '../_base_/base_res101_bs16xep100_apollo.py',
+    '../_base_/optimizer.py',
+]
+
+mod = 'release_iccv/apollo_illu_test'
+mean = [0.485, 0.456, 0.406]
+std = [0.229, 0.224, 0.225]
+
+
+dataset_name = 'apollo'
+dataset = 'illus_chg'
+data_dir = osp.join('/home/raul/phd/datasets/apollosyn_gen-lanenet/data_splits', dataset)
+dataset_dir = '/home/raul/phd/datasets/apollosyn_gen-lanenet/Apollo_Sim_3D_Lane_Release'
+output_dir = 'apollo'
+num_category = 2
+max_lanes = 6
+
+T_max = 30
+eta_min = 1e-6
+clip_grad_norm = 20
+nepochs = 210
+eval_freq = 1
+
+h_org, w_org = 1080, 1920
+
+batch_size = 2
+nworkers = 4
+pos_threshold = 0.5
+top_view_region = [
+    [-10, 103], [10, 103], [-10, 3], [10, 3]]
+enlarge_length = 20
+position_range = [
+    top_view_region[0][0] - enlarge_length,
+    top_view_region[2][1] - enlarge_length,
+    -5,
+    top_view_region[1][0] + enlarge_length,
+    top_view_region[0][1] + enlarge_length,
+    5.]
+anchor_y_steps = [
+    3.0, 8.26315789, 13.52631579, 18.78947368, 24.05263158,
+    29.31578947, 34.57894737, 39.84210526, 45.10526316, 50.36842105,
+    55.63157895, 60.89473684, 66.15789474, 71.42105263, 76.68421053,
+    81.94736842, 87.21052632, 92.47368421, 97.73684211, 103.0
+]
+num_y_steps = len(anchor_y_steps)
+
+photo_aug = dict(
+    brightness_delta=32,
+    contrast_range=(0.5, 1.5),
+    saturation_range=(0.5, 1.5),
+    hue_delta=18)
+
+_dim_ = 192
+num_query = 12
+num_pt_per_line = 20
+latr_cfg = dict(
+    fpn_dim = _dim_,
+    num_query = num_query,
+    num_group = 1,
+    sparse_num_group = 4,
+    neck = dict(
+        type='FPN',
+        in_channels=[192, 384, 768],
+        out_channels=_dim_,
+        start_level=0,
+        add_extra_convs='on_output',
+        num_outs=4,
+        relu_before_extra_convs=True
+    ),
+    head=dict(
+        xs_loss_weight=2.0,
+        zs_loss_weight=10.0,
+        vis_loss_weight=1.0,
+        cls_loss_weight=10,
+        project_loss_weight=1.0,
+        pt_as_query=True,
+        num_pt_per_line=num_pt_per_line,
+    ),
+    trans_params=dict(init_z=0, bev_h=150, bev_w=70),
+)
+
+ms2one=dict(
+    type='DilateNaive',
+    inc=_dim_, outc=_dim_, num_scales=4,
+    dilations=(1, 2, 5, 9))
+
+transformer=dict(
+    type='LATRTransformer',
+    decoder=dict(
+        type='LATRTransformerDecoder',
+        embed_dims=_dim_,
+        num_layers=6,
+        enlarge_length=enlarge_length,
+        M_decay_ratio=1,
+        num_query=num_query,
+        num_anchor_per_query=num_pt_per_line,
+        anchor_y_steps=anchor_y_steps,
+        transformerlayers=dict(
+            type='LATRDecoderLayer',
+            attn_cfgs=[
+                dict(
+                    type='MultiheadAttention',
+                    embed_dims=_dim_,
+                    num_heads=4,
+                    dropout=0.1),
+                dict(
+                    type='MSDeformableAttention3D',
+                    embed_dims=_dim_,
+                    num_heads=4,
+                    num_levels=1,
+                    num_points=8,
+                    batch_first=False,
+                    num_query=num_query,
+                    num_anchor_per_query=num_pt_per_line,
+                    anchor_y_steps=anchor_y_steps,
+                    dropout=0.1,
+                    dataset_name=dataset_name),
+                ],
+            ffn_cfgs=dict(
+                type='FFN',
+                embed_dims=_dim_,
+                feedforward_channels=_dim_*8,
+                num_fcs=2,
+                ffn_drop=0.1,
+                act_cfg=dict(type='ReLU', inplace=True),
+            ),
+            feedforward_channels=_dim_ * 8,
+            operation_order=('self_attn', 'norm', 'cross_attn', 'norm',
+                            'ffn', 'norm')),
+))
+
+sparse_ins_decoder=Config(
+    dict(
+        encoder=dict(
+            out_dims=_dim_),
+        decoder=dict(
+            num_query=latr_cfg['num_query'],
+            num_group=latr_cfg['num_group'],
+            sparse_num_group=latr_cfg['sparse_num_group'],
+            hidden_dim=_dim_,
+            kernel_dim=_dim_,
+            num_classes=num_category,
+            num_convs=4,
+            output_iam=True,
+            scale_factor=1.,
+            ce_weight=2.0,
+            mask_weight=5.0,
+            dice_weight=2.0,
+            objectness_weight=1.0,
+        ),
+        sparse_decoder_weight=5.0,
+))
+
+resize_h = 720
+resize_w = 960
+
+optimizer_cfg = dict(
+    type='AdamW',
+    lr=2e-4,
+    weight_decay=0.01)
